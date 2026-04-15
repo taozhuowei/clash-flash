@@ -2,20 +2,65 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
-import { useAppStore } from '@/store';
+import { useAppStore, useClashStore, useConfigStore } from '@/store';
+import * as api from '@/api';
+import type { ProxyNode } from '@/types';
 
 export function OnboardingPage() {
   const navigate = useNavigate();
   const { setFirstLaunch } = useAppStore();
   const [step, setStep] = useState(1);
+  const [subscriptionUrl, setSubscriptionUrl] = useState('');
+  const [subscriptionName, setSubscriptionName] = useState('');
+  const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleComplete = () => {
-    setFirstLaunch(false);
-    navigate('/home');
+  const handleComplete = async () => {
+    try {
+      await api.completeOnboarding();
+      setFirstLaunch(false);
+      navigate('/home');
+    } catch (e) {
+      setFirstLaunch(false);
+      navigate('/home');
+    }
   };
 
   const handleSkip = () => {
     handleComplete();
+  };
+
+  const handleAddSubscription = async () => {
+    if (!subscriptionUrl.trim()) {
+      setError('请输入订阅链接');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      const name = subscriptionName.trim() || '我的机场';
+      const sub = await api.addSubscription(name, subscriptionUrl.trim());
+
+      try {
+        const info = await api.updateSubscription(sub.id);
+        setNodes(info.nodes);
+      } catch {
+        setNodes([]);
+      }
+
+      setStep(2);
+    } catch (e: any) {
+      setError(e?.toString() || '添加订阅失败，请检查链接是否正确');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUseBuiltinAirport = () => {
+    handleAddSubscription();
   };
 
   return (
@@ -45,13 +90,22 @@ export function OnboardingPage() {
           {step === 1 && (
             <Step1Airport
               key="step1"
-              onNext={() => setStep(2)}
+              onNext={handleUseBuiltinAirport}
               onSkip={handleSkip}
+              subscriptionUrl={subscriptionUrl}
+              setSubscriptionUrl={setSubscriptionUrl}
+              subscriptionName={subscriptionName}
+              setSubscriptionName={setSubscriptionName}
+              isLoading={isLoading}
+              error={error}
+              setError={setError}
+              onAddSubscription={handleAddSubscription}
             />
           )}
           {step === 2 && (
             <Step2Nodes
               key="step2"
+              nodes={nodes}
               onNext={() => setStep(3)}
               onBack={() => setStep(1)}
             />
@@ -80,7 +134,31 @@ export function OnboardingPage() {
   );
 }
 
-function Step1Airport({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+function Step1Airport({
+  onNext,
+  onSkip,
+  subscriptionUrl,
+  setSubscriptionUrl,
+  subscriptionName,
+  setSubscriptionName,
+  isLoading,
+  error,
+  setError,
+  onAddSubscription,
+}: {
+  onNext: () => void;
+  onSkip: () => void;
+  subscriptionUrl: string;
+  setSubscriptionUrl: (v: string) => void;
+  subscriptionName: string;
+  setSubscriptionName: (v: string) => void;
+  isLoading: boolean;
+  error: string;
+  setError: (v: string) => void;
+  onAddSubscription: () => void;
+}) {
+  const [showCustomInput, setShowCustomInput] = useState(false);
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
@@ -92,47 +170,107 @@ function Step1Airport({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
         <p className="text-gray-500 dark:text-gray-400">内置机场网页嵌入区域</p>
       </div>
 
-      <Button onClick={onNext} className="w-full" size="lg">
-        使用内置机场，进入下一步
-      </Button>
+      {!showCustomInput ? (
+        <>
+          <Button onClick={onNext} className="w-full" size="lg" disabled={isLoading}>
+            {isLoading ? '⏳ 正在导入...' : '使用内置机场，进入下一步'}
+          </Button>
 
-      <button
-        onClick={onSkip}
-        className="w-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors text-sm"
-      >
-        已有机场，稍后导入
-      </button>
+          <button
+            onClick={() => setShowCustomInput(true)}
+            className="w-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors text-sm"
+          >
+            我自己有机场，输入订阅链接
+          </button>
+
+          <button
+            onClick={onSkip}
+            className="w-full text-gray-400 dark:text-gray-500 hover:text-gray-500 dark:hover:text-gray-400 transition-colors text-xs"
+          >
+            稍后导入，跳过此步
+          </button>
+        </>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              机场名称（可选）
+            </label>
+            <input
+              type="text"
+              value={subscriptionName}
+              onChange={(e) => setSubscriptionName(e.target.value)}
+              placeholder="例如：我的机场"
+              className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              订阅链接
+            </label>
+            <input
+              type="url"
+              value={subscriptionUrl}
+              onChange={(e) => {
+                setSubscriptionUrl(e.target.value);
+                setError('');
+              }}
+              placeholder="请输入订阅链接"
+              className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {error && (
+            <p className="text-red-500 text-sm">{error}</p>
+          )}
+
+          <Button
+            onClick={onAddSubscription}
+            className="w-full"
+            size="lg"
+            disabled={isLoading || !subscriptionUrl.trim()}
+          >
+            {isLoading ? '⏳ 正在导入...' : '导入订阅'}
+          </Button>
+
+          <button
+            onClick={() => setShowCustomInput(false)}
+            className="w-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors text-sm"
+          >
+            返回使用内置机场
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }
 
-function Step2Nodes({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+function Step2Nodes({
+  nodes,
+  onNext,
+  onBack,
+}: {
+  nodes: ProxyNode[];
+  onNext: () => void;
+  onBack: () => void;
+}) {
+  const { setCurrentProxy } = useClashStore();
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [isTesting, setIsTesting] = useState(false);
 
-  const [nodes, setNodes] = useState([
-    { name: '香港 01', latency: 32 },
-    { name: '香港 02', latency: 45 },
-    { name: '日本 01', latency: 120 },
-    { name: '新加坡 01', latency: 150 },
-    { name: '美国 01', latency: 280 },
-  ]);
+  const displayNodes = nodes.length > 0 ? nodes : [
+    { name: '香港 01', node_type: 'ss', server: '', port: 0, group: '' },
+    { name: '香港 02', node_type: 'ss', server: '', port: 0, group: '' },
+    { name: '日本 01', node_type: 'ss', server: '', port: 0, group: '' },
+    { name: '新加坡 01', node_type: 'ss', server: '', port: 0, group: '' },
+    { name: '美国 01', node_type: 'ss', server: '', port: 0, group: '' },
+  ];
 
-  const getLatencyColor = (latency: number) => {
-    if (latency < 100) return 'text-green-500';
-    if (latency < 200) return 'text-yellow-500';
-    return 'text-red-500';
-  };
-
-  const handleTestAll = () => {
-    setIsTesting(true);
-    setTimeout(() => {
-      setNodes(nodes.map(node => ({
-        ...node,
-        latency: Math.floor(Math.random() * 300) + 10
-      })).sort((a, b) => a.latency - b.latency));
-      setIsTesting(false);
-    }, 1500);
+  const handleNext = () => {
+    if (selectedNode) {
+      setCurrentProxy(selectedNode);
+    }
+    onNext();
   };
 
   return (
@@ -146,8 +284,12 @@ function Step2Nodes({ onNext, onBack }: { onNext: () => void; onBack: () => void
         选择节点
       </h2>
 
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        共 {displayNodes.length} 个可用节点{nodes.length === 0 ? '（示例数据）' : ''}
+      </p>
+
       <div className="space-y-2 max-h-64 overflow-y-auto">
-        {nodes.map((node) => (
+        {displayNodes.map((node) => (
           <button
             key={node.name}
             onClick={() => setSelectedNode(node.name)}
@@ -157,31 +299,25 @@ function Step2Nodes({ onNext, onBack }: { onNext: () => void; onBack: () => void
                 : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
             }`}
           >
-            <span className="text-gray-800 dark:text-white">
-              {node.name}
-              {selectedNode === node.name && ' ✓'}
-            </span>
-            <span className={`font-medium ${getLatencyColor(node.latency)}`}>
-              {node.latency}ms
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-800 dark:text-white">
+                {node.name}
+              </span>
+              <span className="text-xs text-gray-400">{node.node_type}</span>
+              {selectedNode === node.name && <span className="text-blue-500">✓</span>}
+            </div>
+            {node.group && (
+              <span className="text-xs text-gray-400">{node.group}</span>
+            )}
           </button>
         ))}
       </div>
-
-      <Button
-        variant="outline"
-        onClick={handleTestAll}
-        disabled={isTesting}
-        className="w-full"
-      >
-        {isTesting ? '⏳ 测试中...' : '⚡ 测试所有节点延迟'}
-      </Button>
 
       <div className="flex gap-3">
         <Button variant="outline" onClick={onBack} className="flex-1">
           上一步
         </Button>
-        <Button onClick={onNext} className="flex-1">
+        <Button onClick={handleNext} className="flex-1">
           下一步
         </Button>
       </div>
@@ -189,10 +325,29 @@ function Step2Nodes({ onNext, onBack }: { onNext: () => void; onBack: () => void
   );
 }
 
-function Step3Config({ onComplete, onBack }: { onComplete: () => void; onBack: () => void }) {
+function Step3Config({
+  onComplete,
+  onBack,
+}: {
+  onComplete: () => void;
+  onBack: () => void;
+}) {
+  const { setConfig } = useConfigStore();
   const [tunEnabled, setTunEnabled] = useState(true);
   const [systemProxy, setSystemProxy] = useState(true);
   const [autoStart, setAutoStart] = useState(false);
+
+  const handleComplete = async () => {
+    try {
+      await api.setConfig('auto_system_proxy', systemProxy ? 'true' : 'false');
+      await api.setConfig('auto_start', autoStart ? 'true' : 'false');
+      setConfig({
+        auto_system_proxy: systemProxy,
+        auto_start: autoStart,
+      });
+    } catch {}
+    onComplete();
+  };
 
   return (
     <motion.div
@@ -280,7 +435,7 @@ function Step3Config({ onComplete, onBack }: { onComplete: () => void; onBack: (
         <Button variant="outline" onClick={onBack} className="flex-1">
           上一步
         </Button>
-        <Button onClick={onComplete} className="flex-1">
+        <Button onClick={handleComplete} className="flex-1">
           完成 ✓
         </Button>
       </div>

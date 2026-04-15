@@ -5,6 +5,7 @@ use tauri::Manager;
 
 mod db;
 mod commands;
+mod subscription;
 
 pub static DB: OnceCell<Mutex<Connection>> = OnceCell::new();
 
@@ -42,10 +43,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::set_config,
+            commands::get_all_configs,
             commands::get_subscriptions,
             commands::add_subscription,
+            commands::update_subscription,
             commands::delete_subscription,
             commands::set_default_subscription,
+            commands::get_logs,
+            commands::complete_onboarding,
         ])
         .setup(|app| {
             #[cfg(desktop)]

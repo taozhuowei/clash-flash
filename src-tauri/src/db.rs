@@ -1,17 +1,73 @@
 use rusqlite::{Connection, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Subscription {
     pub id: i64,
     pub name: String,
     pub url: String,
     pub is_default: bool,
+    pub traffic_used: f64,
+    pub traffic_total: f64,
+    pub expire_date: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub id: i64,
+    pub level: String,
+    pub message: String,
+    pub created_at: String,
+}
+
+const DB_VERSION: i32 = 2;
+
 pub fn init_tables(conn: &Connection) -> Result<()> {
+    let current_version = get_db_version(conn);
+
+    if current_version < 1 {
+        create_v1_tables(conn)?;
+    }
+
+    if current_version < 2 {
+        migrate_v1_to_v2(conn)?;
+    }
+
+    set_db_version(conn, DB_VERSION)?;
+
+    init_default_configs(conn)?;
+
+    Ok(())
+}
+
+fn get_db_version(conn: &Connection) -> i32 {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS db_meta (key TEXT PRIMARY KEY, value TEXT)",
+        [],
+    )
+    .ok();
+
+    conn.query_row(
+        "SELECT value FROM db_meta WHERE key = 'version'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(0)
+}
+
+fn set_db_version(conn: &Connection, version: i32) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO db_meta (key, value) VALUES ('version', ?1)",
+        [version.to_string()],
+    )?;
+    Ok(())
+}
+
+fn create_v1_tables(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +100,28 @@ pub fn init_tables(conn: &Connection) -> Result<()> {
         [],
     )?;
 
-    init_default_configs(conn)?;
+    Ok(())
+}
+
+fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+    let has_traffic = conn
+        .prepare("SELECT traffic_used FROM subscriptions LIMIT 1")
+        .is_ok();
+
+    if !has_traffic {
+        conn.execute(
+            "ALTER TABLE subscriptions ADD COLUMN traffic_used REAL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE subscriptions ADD COLUMN traffic_total REAL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE subscriptions ADD COLUMN expire_date TEXT",
+            [],
+        )?;
+    }
 
     Ok(())
 }
@@ -59,6 +136,8 @@ fn init_default_configs(conn: &Connection) -> Result<()> {
         ("mixed_port", "7891"),
         ("allow_lan", "false"),
         ("is_first_launch", "true"),
+        ("clash_core_path", ""),
+        ("clash_config_path", ""),
     ];
 
     for (key, value) in defaults {
@@ -71,21 +150,30 @@ fn init_default_configs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn get_subscription_by_id(conn: &Connection, id: i64) -> Result<Option<Subscription>> {
+pub fn add_log(conn: &Connection, level: &str, message: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO logs (level, message) VALUES (?1, ?2)",
+        [level, message],
+    )?;
+    Ok(())
+}
+
+pub fn get_recent_logs(conn: &Connection, limit: i64) -> Result<Vec<LogEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, url, is_default, created_at, updated_at FROM subscriptions WHERE id = ?1"
+        "SELECT id, level, message, created_at FROM logs ORDER BY id DESC LIMIT ?1",
     )?;
 
-    let sub = stmt.query_row([id], |row| {
-        Ok(Subscription {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            url: row.get(2)?,
-            is_default: row.get::<_, i32>(3)? == 1,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-        })
-    }).ok();
+    let logs = stmt
+        .query_map([limit], |row| {
+            Ok(LogEntry {
+                id: row.get(0)?,
+                level: row.get(1)?,
+                message: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    Ok(sub)
+    Ok(logs)
 }

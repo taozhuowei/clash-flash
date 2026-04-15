@@ -1,12 +1,40 @@
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from './components/layout/MainLayout';
 import { OnboardingPage } from './pages/Onboarding';
 import { HomePage } from './pages/Home';
 import { SettingsPage } from './pages/Settings';
 import { useAppStore } from './store';
+import * as api from './api';
 
 function App() {
-  const { isFirstLaunch } = useAppStore();
+  const { isFirstLaunch, setFirstLaunch } = useAppStore();
+  const [isChecking, setIsChecking] = useState(true);
+
+  useEffect(() => {
+    checkFirstLaunch();
+  }, []);
+
+  const checkFirstLaunch = async () => {
+    try {
+      const value = await api.getConfig('is_first_launch');
+      if (value === 'false') {
+        setFirstLaunch(false);
+      }
+    } catch {}
+    setIsChecking(false);
+  };
+
+  if (isChecking) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-4 animate-pulse">⚡</div>
+          <p className="text-gray-500 dark:text-gray-400">Clash Flash 加载中...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Routes>

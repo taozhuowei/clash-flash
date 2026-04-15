@@ -3,15 +3,29 @@ export interface Subscription {
   name: string;
   url: string;
   is_default: boolean;
+  traffic_used: number;
+  traffic_total: number;
+  expire_date: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface ProxyNode {
   name: string;
-  type: string;
-  latency: number;
-  is_selected: boolean;
+  node_type: string;
+  server: string;
+  port: number;
+  group: string;
+  latency?: number;
+  is_selected?: boolean;
+}
+
+export interface SubscriptionInfo {
+  name: string;
+  traffic_used: number;
+  traffic_total: number;
+  expire_date: string | null;
+  nodes: ProxyNode[];
 }
 
 export interface ClashStatus {
@@ -40,4 +54,11 @@ export interface TrafficInfo {
   total: number;
   expire_date: string;
   days_left: number;
+}
+
+export interface LogEntry {
+  id: number;
+  level: string;
+  message: string;
+  created_at: string;
 }

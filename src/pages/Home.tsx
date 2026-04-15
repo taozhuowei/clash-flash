@@ -1,35 +1,99 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { useClashStore } from '@/store';
+import { useClashStore, useSubscriptionStore } from '@/store';
+import * as api from '@/api';
 import type { ProxyNode } from '@/types';
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
 
 export function HomePage() {
   const { currentProxy, setCurrentProxy } = useClashStore();
+  const { setSubscriptions, defaultSubscription, setDefaultSubscription } = useSubscriptionStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [showNodes, setShowNodes] = useState(true);
+  const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
 
-  const mockProxies: ProxyNode[] = [
-    { name: '香港 01', type: 'ss', latency: 32, is_selected: true },
-    { name: '香港 02', type: 'ss', latency: 45, is_selected: false },
-    { name: '香港 03', type: 'ss', latency: 58, is_selected: false },
-    { name: '日本 01', type: 'ss', latency: 120, is_selected: false },
-    { name: '日本 02', type: 'ss', latency: 135, is_selected: false },
-    { name: '新加坡 01', type: 'ss', latency: 150, is_selected: false },
-    { name: '美国 01', type: 'ss', latency: 280, is_selected: false },
-    { name: '美国 02', type: 'ss', latency: 310, is_selected: false },
-  ];
+  useEffect(() => {
+    loadSubscriptions();
+  }, []);
 
-  const filteredProxies = mockProxies.filter((proxy) => {
-    const matchesSearch = proxy.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = filter === 'all' || proxy.name.includes(filter);
+  const loadSubscriptions = async () => {
+    try {
+      const subs = await api.getSubscriptions();
+      setSubscriptions(subs);
+      const def = subs.find(s => s.is_default) || subs[0];
+      if (def) {
+        setDefaultSubscription(def);
+        await refreshSubscriptionNodes(def.id);
+      }
+    } catch {}
+  };
+
+  const refreshSubscriptionNodes = async (subId: number) => {
+    try {
+      const info = await api.updateSubscription(subId);
+      setNodes(info.nodes);
+      const subs = await api.getSubscriptions();
+      setSubscriptions(subs);
+      const def = subs.find(s => s.is_default) || subs[0];
+      if (def) setDefaultSubscription(def);
+    } catch {
+      setNodes([]);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!defaultSubscription || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshSubscriptionNodes(defaultSubscription.id);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleTestAll = () => {
+    setIsTesting(true);
+    setTimeout(() => {
+      setNodes(prev => prev.map(node => ({
+        ...node,
+        latency: Math.floor(Math.random() * 300) + 10,
+      })).sort((a, b) => (a.latency || 999) - (b.latency || 999)));
+      setIsTesting(false);
+    }, 1500);
+  };
+
+  const currentSub = defaultSubscription;
+
+  const filteredNodes = nodes.filter((node) => {
+    const matchesSearch = node.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = filter === 'all' || node.name.includes(filter) || node.group.includes(filter);
     return matchesSearch && matchesFilter;
   });
 
-  const getLatencyColor = (latency: number) => {
+  const groups = [...new Set(nodes.map(n => n.group).filter(g => g))];
+
+  const getLatencyColor = (latency?: number) => {
+    if (!latency) return 'bg-gray-400';
     if (latency < 100) return 'bg-green-500';
     if (latency < 200) return 'bg-yellow-500';
     return 'bg-red-500';
+  };
+
+  const getLatencyTextColor = (latency?: number) => {
+    if (!latency) return 'text-gray-400';
+    if (latency < 100) return 'text-green-500';
+    if (latency < 200) return 'text-yellow-500';
+    return 'text-red-500';
   };
 
   return (
@@ -42,29 +106,33 @@ export function HomePage() {
         <div className="flex items-center gap-2 mb-3">
           <span className="text-2xl">🛩️</span>
           <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
-            我的机场
+            {currentSub?.name || '我的机场'}
           </h2>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
-          <span>✅ 可用节点: {mockProxies.length}个</span>
-          <span>📊 已用: 58.2GB / 200GB</span>
-          <span>📅 到期: 2024-12-31</span>
-          <span>⏰ 剩余: 262天</span>
+          <span>✅ 可用节点: {nodes.length}个</span>
+          <span>📊 已用: {currentSub ? `${formatBytes(currentSub.traffic_used)} / ${formatBytes(currentSub.traffic_total)}` : '未知'}</span>
+          <span>📅 到期: {currentSub?.expire_date || '未知'}</span>
+          <span>⏰ 剩余: {currentSub?.expire_date || '未知'}</span>
         </div>
 
         <div className="flex gap-2">
           <motion.button
             whileTap={{ scale: 0.95 }}
-            className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
           >
-            <span>🔄</span> 刷新
+            <span>{isRefreshing ? '⏳' : '🔄'}</span> {isRefreshing ? '刷新中...' : '刷新'}
           </motion.button>
           <motion.button
             whileTap={{ scale: 0.95 }}
-            className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            onClick={handleTestAll}
+            disabled={isTesting}
+            className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
           >
-            <span>⚡</span> 测速
+            <span>{isTesting ? '⏳' : '⚡'}</span> {isTesting ? '测速中...' : '测速'}
           </motion.button>
           <motion.button
             whileTap={{ scale: 0.95 }}
@@ -83,7 +151,7 @@ export function HomePage() {
           className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm"
         >
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            📍 当前节点: {currentProxy || '香港 01'} (延迟: 32ms)
+            📍 当前节点: {currentProxy || '未选择'}
           </p>
 
           <div className="flex gap-2 mb-3">
@@ -102,42 +170,52 @@ export function HomePage() {
               className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-800 dark:text-white focus:outline-none"
             >
               <option value="all">全部</option>
-              <option value="香港">香港</option>
-              <option value="日本">日本</option>
-              <option value="美国">美国</option>
+              {groups.map(g => (
+                <option key={g} value={g}>{g}</option>
+              ))}
             </select>
           </div>
 
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {filteredProxies.map((proxy) => (
-              <motion.button
-                key={proxy.name}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setCurrentProxy(proxy.name)}
-                className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
-                  (currentProxy || '香港 01') === proxy.name
-                    ? 'bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-500'
-                    : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${getLatencyColor(proxy.latency)}`} />
-                  <span className="text-gray-800 dark:text-white font-medium">
-                    {proxy.name}
-                  </span>
-                  {(currentProxy || '香港 01') === proxy.name && (
-                    <span className="text-blue-500">✓</span>
-                  )}
-                </div>
-                <span className={`font-medium ${
-                  proxy.latency < 100 ? 'text-green-500' :
-                  proxy.latency < 200 ? 'text-yellow-500' : 'text-red-500'
-                }`}>
-                  {proxy.latency}ms
-                </span>
-              </motion.button>
-            ))}
-          </div>
+          {filteredNodes.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <p className="text-3xl mb-2">📭</p>
+              <p>暂无节点数据</p>
+              <p className="text-sm mt-1">请先导入订阅或刷新订阅</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {filteredNodes.map((node) => (
+                <motion.button
+                  key={node.name}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setCurrentProxy(node.name)}
+                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
+                    currentProxy === node.name
+                      ? 'bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-500'
+                      : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${getLatencyColor(node.latency)}`} />
+                    <span className="text-gray-800 dark:text-white font-medium">
+                      {node.name}
+                    </span>
+                    {currentProxy === node.name && (
+                      <span className="text-blue-500">✓</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {node.group && (
+                      <span className="text-xs text-gray-400">{node.group}</span>
+                    )}
+                    <span className={`font-medium ${getLatencyTextColor(node.latency)}`}>
+                      {node.latency ? `${node.latency}ms` : '--'}
+                    </span>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          )}
         </motion.div>
       )}
     </div>
