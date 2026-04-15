@@ -6,6 +6,8 @@ use tauri::Manager;
 mod db;
 mod commands;
 mod subscription;
+mod clash;
+mod clash_api;
 
 pub static DB: OnceCell<Mutex<Connection>> = OnceCell::new();
 
@@ -29,6 +31,17 @@ fn init_database() -> Result<(), String> {
     Ok(())
 }
 
+fn init_clash_process() -> Result<(), String> {
+    use clash::ClashProcess;
+
+    let clash_proc = ClashProcess::new(9090, "clash-flash".to_string());
+    commands::CLASH_PROCESS
+        .set(Mutex::new(clash_proc))
+        .map_err(|_| "Clash process already initialized".to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -36,6 +49,10 @@ pub fn run() {
 
     if let Err(e) = init_database() {
         eprintln!("Database initialization failed: {}", e);
+    }
+
+    if let Err(e) = init_clash_process() {
+        eprintln!("Clash process initialization failed: {}", e);
     }
 
     tauri::Builder::default()
@@ -51,6 +68,15 @@ pub fn run() {
             commands::set_default_subscription,
             commands::get_logs,
             commands::complete_onboarding,
+            commands::download_clash_core,
+            commands::check_clash_core,
+            commands::start_clash,
+            commands::stop_clash,
+            commands::restart_clash,
+            commands::get_clash_status,
+            commands::get_clash_proxies,
+            commands::switch_clash_proxy,
+            commands::test_proxy_delay,
         ])
         .setup(|app| {
             #[cfg(desktop)]

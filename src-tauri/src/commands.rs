@@ -1,7 +1,17 @@
+use crate::clash::{self, ClashProcess};
+use crate::clash_api::{self, ClashApiClient, ProxyItem, ProxiesResponse};
 use crate::db::{self, Subscription};
 use crate::subscription::{self, SubscriptionInfo};
 use crate::DB;
+use once_cell::sync::OnceCell;
 use rusqlite::params;
+use std::sync::Mutex;
+
+pub static CLASH_PROCESS: OnceCell<Mutex<ClashProcess>> = OnceCell::new();
+
+fn get_clash_api() -> ClashApiClient {
+    ClashApiClient::new(9090, "clash-flash")
+}
 
 #[tauri::command]
 pub fn get_config(key: String) -> Result<Option<String>, String> {
@@ -202,4 +212,171 @@ pub fn complete_onboarding() -> Result<(), String> {
     db::add_log(&conn, "info", "Onboarding completed").ok();
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn download_clash_core() -> Result<String, String> {
+    let path = clash::download_clash_binary()?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn check_clash_core() -> Result<bool, String> {
+    Ok(clash::is_clash_binary_exists())
+}
+
+#[tauri::command]
+pub fn start_clash() -> Result<(), String> {
+    let clash_proc = CLASH_PROCESS
+        .get()
+        .ok_or("Clash process not initialized")?;
+    let mut proc = clash_proc.lock().map_err(|e| e.to_string())?;
+
+    if proc.is_running() {
+        return Ok(());
+    }
+
+    let db = DB.get().ok_or("Database not initialized")?;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT url FROM subscriptions WHERE is_default = 1 LIMIT 1")
+        .map_err(|e| e.to_string())?;
+
+    let url: String = stmt
+        .query_row([], |row| row.get(0))
+        .map_err(|e| format!("No default subscription: {}", e))?;
+
+    drop(stmt);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("ClashFlash/1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("Failed to download subscription: {}", e))?;
+
+    let content = response
+        .text()
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let proxy_port: u16 = conn
+        .query_row(
+            "SELECT value FROM configs WHERE key = 'proxy_port'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7890);
+
+    let mixed_port: u16 = conn
+        .query_row(
+            "SELECT value FROM configs WHERE key = 'mixed_port'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7891);
+
+    let allow_lan: bool = conn
+        .query_row(
+            "SELECT value FROM configs WHERE key = 'allow_lan'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    let tun_enabled: bool = conn
+        .query_row(
+            "SELECT value FROM configs WHERE key = 'tun_enabled'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let config_content = clash::generate_clash_config(
+        proxy_port,
+        mixed_port,
+        allow_lan,
+        tun_enabled,
+        &content,
+    )?;
+
+    let config_dir = clash::get_config_dir()?;
+    let config_path = config_dir.join("clash_flash_config.yaml");
+
+    std::fs::write(&config_path, &config_content)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    proc.start(&config_path.to_string_lossy())?;
+
+    db::add_log(&conn, "info", "Clash core started").ok();
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_clash() -> Result<(), String> {
+    let clash_proc = CLASH_PROCESS
+        .get()
+        .ok_or("Clash process not initialized")?;
+    let mut proc = clash_proc.lock().map_err(|e| e.to_string())?;
+
+    proc.stop()?;
+
+    let db = DB.get().ok_or("Database not initialized")?;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    db::add_log(&conn, "info", "Clash core stopped").ok();
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restart_clash() -> Result<(), String> {
+    stop_clash()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    start_clash()
+}
+
+#[derive(serde::Serialize)]
+pub struct ClashStatusResponse {
+    pub is_running: bool,
+    pub is_tun_enabled: bool,
+}
+
+#[tauri::command]
+pub fn get_clash_status() -> Result<ClashStatusResponse, String> {
+    let api = get_clash_api();
+    Ok(ClashStatusResponse {
+        is_running: api.is_running(),
+        is_tun_enabled: false,
+    })
+}
+
+#[tauri::command]
+pub fn get_clash_proxies() -> Result<ProxiesResponse, String> {
+    let api = get_clash_api();
+    api.get_proxies()
+}
+
+#[tauri::command]
+pub fn switch_clash_proxy(group: String, name: String) -> Result<(), String> {
+    let api = get_clash_api();
+    api.switch_proxy(&group, &name)
+}
+
+#[tauri::command]
+pub fn test_proxy_delay(name: String) -> Result<i64, String> {
+    let api = get_clash_api();
+    api.get_delay(&name, "http://www.gstatic.com/generate_204", 5000)
 }

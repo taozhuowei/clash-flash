@@ -40,3 +40,50 @@ export async function getLogs(limit?: number): Promise<LogEntry[]> {
 export async function completeOnboarding(): Promise<void> {
   return invoke('complete_onboarding');
 }
+
+export async function downloadClashCore(): Promise<string> {
+  return invoke<string>('download_clash_core');
+}
+
+export async function checkClashCore(): Promise<boolean> {
+  return invoke<boolean>('check_clash_core');
+}
+
+export async function startClash(): Promise<void> {
+  return invoke('start_clash');
+}
+
+export async function stopClash(): Promise<void> {
+  return invoke('stop_clash');
+}
+
+export async function restartClash(): Promise<void> {
+  return invoke('restart_clash');
+}
+
+export async function getClashStatus(): Promise<{ is_running: boolean; is_tun_enabled: boolean }> {
+  return invoke('get_clash_status');
+}
+
+export interface ClashProxy {
+  name: string;
+  type: string;
+  group?: string;
+}
+
+export interface ClashProxiesResponse {
+  proxies: Record<string, ClashProxy>;
+  groups: string[];
+}
+
+export async function getClashProxies(): Promise<ClashProxiesResponse> {
+  return invoke<ClashProxiesResponse>('get_clash_proxies');
+}
+
+export async function switchClashProxy(group: string, name: string): Promise<void> {
+  return invoke('switch_clash_proxy', { group, name });
+}
+
+export async function testProxyDelay(name: string): Promise<number> {
+  return invoke<number>('test_proxy_delay', { name });
+}

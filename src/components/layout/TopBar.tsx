@@ -1,23 +1,46 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useClashStore, useAppStore } from '@/store';
+import * as api from '@/api';
 
 export function TopBar() {
   const navigate = useNavigate();
   const { isRunning, isTunEnabled, setIsRunning, setIsTunEnabled } = useClashStore();
   const { setCurrentPage } = useAppStore();
+  const [isToggling, setIsToggling] = useState(false);
 
   const handleSettingsClick = () => {
     setCurrentPage('settings');
     navigate('/settings');
   };
 
-  const handleVPNToggle = () => {
-    setIsRunning(!isRunning);
+  const handleVPNToggle = async () => {
+    if (isToggling) return;
+    setIsToggling(true);
+    try {
+      if (isRunning) {
+        await api.stopClash();
+        setIsRunning(false);
+      } else {
+        await api.startClash();
+        setIsRunning(true);
+      }
+    } catch (e) {
+      console.error('Failed to toggle VPN:', e);
+    } finally {
+      setIsToggling(false);
+    }
   };
 
-  const handleTunToggle = () => {
-    setIsTunEnabled(!isTunEnabled);
+  const handleTunToggle = async () => {
+    if (isToggling) return;
+    setIsToggling(true);
+    try {
+      setIsTunEnabled(!isTunEnabled);
+    } finally {
+      setIsToggling(false);
+    }
   };
 
   return (

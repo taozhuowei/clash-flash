@@ -4,7 +4,7 @@ import { MainLayout } from './components/layout/MainLayout';
 import { OnboardingPage } from './pages/Onboarding';
 import { HomePage } from './pages/Home';
 import { SettingsPage } from './pages/Settings';
-import { useAppStore } from './store';
+import { useAppStore, useClashStore } from './store';
 import * as api from './api';
 
 function App() {
@@ -13,7 +13,23 @@ function App() {
 
   useEffect(() => {
     checkFirstLaunch();
+    initClash();
   }, []);
+
+  const initClash = async () => {
+    try {
+      const hasCore = await api.checkClashCore();
+      if (!hasCore) {
+        console.log('Downloading Clash Core...');
+        await api.downloadClashCore();
+      }
+      const status = await api.getClashStatus();
+      useClashStore.getState().setIsRunning(status.is_running);
+      useClashStore.getState().setIsTunEnabled(status.is_tun_enabled);
+    } catch (e) {
+      console.error('Failed to init Clash:', e);
+    }
+  };
 
   const checkFirstLaunch = async () => {
     try {
