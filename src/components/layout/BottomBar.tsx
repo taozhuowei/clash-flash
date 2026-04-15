@@ -1,7 +1,39 @@
+import { useEffect, useRef } from 'react';
 import { useClashStore } from '@/store';
+import * as api from '@/api';
 
 export function BottomBar() {
-  const { status } = useClashStore();
+  const { status, isRunning, setStatus } = useClashStore();
+  const lastTraffic = useRef({ up: 0, down: 0 });
+  const lastTime = useRef(Date.now());
+
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const fetchTraffic = async () => {
+      try {
+        const traffic = await api.getClashTraffic();
+        const now = Date.now();
+        const timeDiff = (now - lastTime.current) / 1000;
+
+        if (timeDiff > 0) {
+          const upSpeed = (traffic.up - lastTraffic.current.up) / timeDiff;
+          const downSpeed = (traffic.down - lastTraffic.current.down) / timeDiff;
+          setStatus({
+            upload_speed: Math.max(0, upSpeed),
+            download_speed: Math.max(0, downSpeed),
+          });
+        }
+
+        lastTraffic.current = traffic;
+        lastTime.current = now;
+      } catch {}
+    };
+
+    fetchTraffic();
+    const interval = setInterval(fetchTraffic, 1000);
+    return () => clearInterval(interval);
+  }, [isRunning]);
 
   const formatSpeed = (bytesPerSec: number) => {
     if (bytesPerSec === 0) return '0 B/s';

@@ -77,6 +77,7 @@ pub fn run() {
             commands::get_clash_proxies,
             commands::switch_clash_proxy,
             commands::test_proxy_delay,
+            commands::get_clash_traffic,
         ])
         .setup(|app| {
             #[cfg(desktop)]

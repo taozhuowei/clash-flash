@@ -87,3 +87,11 @@ export async function switchClashProxy(group: string, name: string): Promise<voi
 export async function testProxyDelay(name: string): Promise<number> {
   return invoke<number>('test_proxy_delay', { name });
 }
+
+export async function getClashTraffic(): Promise<{ up: number; down: number }> {
+  return invoke<{ up: number; down: number }>('get_clash_traffic');
+}
+
+export async function getClashConnectionInfo(): Promise<{ ip: string; location: string; delay: number }> {
+  return invoke<{ ip: string; location: string; delay: number }>('get_clash_connection_info');
+}

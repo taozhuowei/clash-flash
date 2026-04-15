@@ -264,6 +264,9 @@ pub fn start_clash() -> Result<(), String> {
         .text()
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
+    let decoded_content = subscription::base64_decode(&content)
+        .unwrap_or(content);
+
     let proxy_port: u16 = conn
         .query_row(
             "SELECT value FROM configs WHERE key = 'proxy_port'",
@@ -304,18 +307,18 @@ pub fn start_clash() -> Result<(), String> {
         .map(|v| v == "true")
         .unwrap_or(true);
 
-    let config_content = clash::generate_clash_config(
+    let final_config = clash::generate_clash_config(
         proxy_port,
         mixed_port,
         allow_lan,
         tun_enabled,
-        &content,
+        &decoded_content,
     )?;
 
     let config_dir = clash::get_config_dir()?;
     let config_path = config_dir.join("clash_flash_config.yaml");
 
-    std::fs::write(&config_path, &config_content)
+    std::fs::write(&config_path, &final_config)
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
     proc.start(&config_path.to_string_lossy())?;
@@ -379,4 +382,19 @@ pub fn switch_clash_proxy(group: String, name: String) -> Result<(), String> {
 pub fn test_proxy_delay(name: String) -> Result<i64, String> {
     let api = get_clash_api();
     api.get_delay(&name, "http://www.gstatic.com/generate_204", 5000)
+}
+
+#[derive(serde::Serialize)]
+pub struct TrafficResponse {
+    pub up: f64,
+    pub down: f64,
+}
+
+#[tauri::command]
+pub fn get_clash_traffic() -> Result<TrafficResponse, String> {
+    let api = get_clash_api();
+    match api.get_traffic() {
+        Ok(traffic) => Ok(TrafficResponse { up: traffic.up, down: traffic.down }),
+        Err(_) => Ok(TrafficResponse { up: 0.0, down: 0.0 }),
+    }
 }

@@ -88,7 +88,7 @@ fn parse_subscription_content(content: &str) -> Result<SubscriptionInfo, String>
     parse_yaml_subscription(content)
 }
 
-fn base64_decode(input: &str) -> Result<String, String> {
+pub fn base64_decode(input: &str) -> Result<String, String> {
     use base64::Engine;
     let cleaned = input
         .replace('\n', "")

@@ -61,15 +61,47 @@ export function HomePage() {
     }
   };
 
-  const handleTestAll = () => {
+  const handleTestAll = async () => {
     setIsTesting(true);
-    setTimeout(() => {
-      setNodes(prev => prev.map(node => ({
-        ...node,
-        latency: Math.floor(Math.random() * 300) + 10,
-      })).sort((a, b) => (a.latency || 999) - (b.latency || 999)));
+    try {
+      const proxies = await api.getClashProxies();
+      const testPromises = Object.keys(proxies.proxies)
+        .filter(name => proxies.proxies[name].type !== 'Selector')
+        .map(async (name) => {
+          try {
+            const delay = await api.testProxyDelay(name);
+            return { name, delay };
+          } catch {
+            return { name, delay: 9999 };
+          }
+        });
+
+      const results = await Promise.all(testPromises);
+      setNodes(prev => prev.map(node => {
+        const result = results.find(r => r.name === node.name);
+        return result ? { ...node, latency: result.delay } : node;
+      }).sort((a, b) => (a.latency || 999) - (b.latency || 999)));
+    } catch {
+    } finally {
       setIsTesting(false);
-    }, 1500);
+    }
+  };
+
+  const handleNodeSelect = async (nodeName: string) => {
+    try {
+      const proxies = await api.getClashProxies();
+      const groups = Object.entries(proxies.proxies)
+        .filter(([_, p]) => p.type === 'Selector' && p.group)
+        .map(([name, p]) => ({ name, group: p.group }));
+
+      if (groups.length > 0) {
+        await api.switchClashProxy(groups[0].name, nodeName);
+      }
+      setCurrentProxy(nodeName);
+    } catch (e) {
+      console.error('Failed to switch proxy:', e);
+      setCurrentProxy(nodeName);
+    }
   };
 
   const currentSub = defaultSubscription;
@@ -188,7 +220,7 @@ export function HomePage() {
                 <motion.button
                   key={node.name}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => setCurrentProxy(node.name)}
+                  onClick={() => handleNodeSelect(node.name)}
                   className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
                     currentProxy === node.name
                       ? 'bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-500'
